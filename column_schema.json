@@ -1,0 +1,31 @@
+{
+  "columns": [
+    {
+      "name": "name",
+      "required": true,
+      "type": "string",
+      "max_length": 100
+    },
+    {
+      "name": "email",
+      "required": true,
+      "type": "string",
+      "format": "email",
+      "max_length": 255
+    },
+    {
+      "name": "department",
+      "required": false,
+      "type": "string",
+      "max_length": 50,
+      "enum": ["Engineering", "Marketing", "Sales", "HR", "Finance", "Operations", "IT"]
+    },
+    {
+      "name": "salary",
+      "required": false,
+      "type": "number",
+      "minimum": 0,
+      "maximum": 10000000
+    }
+  ]
+}
