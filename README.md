@@ -228,20 +228,6 @@ File upload/
 └── README.md           # This file
 ```
 
-## Future Enhancements (Phase 2)
-
-- [ ] Bulk insert mode with batch commits
-- [ ] Session pooling and reuse
-- [ ] Async database operations
-- [ ] Progress tracking for large files
-- [ ] File upload to cloud storage
-- [ ] Celery task queue for background processing
-- [ ] Retry logic for transient failures
-- [ ] Database connection pooling optimization
-
-## License
-
-MIT
 
 ## Contributing
 
