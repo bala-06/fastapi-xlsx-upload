@@ -15,8 +15,8 @@ from schema_store import ensure_schema_loaded
 # pandas-based processor (row-by-row using JSON schema)
 from pandas_processor import process_file_pandas
 
-# Configure basic logging (set DEBUG for verbose per-row logs)
-logging.basicConfig(level=logging.ERROR, format="%(asctime)s %(levelname)s %(name)s - %(message)s")
+# Configure basic logging (set INFO for production, DEBUG for troubleshooting)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 app = FastAPI(

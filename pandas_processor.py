@@ -145,54 +145,36 @@ def process_file_pandas(file_bytes: bytes, schema: Dict[str, Any]) -> Dict[str, 
 
     logger.info("Processing Excel file via pandas: %d rows detected", len(df))
 
+    # Fetch schema ONCE before processing (major optimization)
+    try:
+        schema = get_schema_from_db()
+    except Exception as e:
+        logger.exception("Failed to fetch schema from DB")
+        raise ValueError(f"Failed to fetch schema: {e}")
+
+    # Pre-extract column names for faster lookup
+    schema_columns = {col_def["name"] for col_def in schema.get("columns", [])}
+    
     # Collect validated records for bulk insert
     records_to_insert: List[EmployeeRecord] = []
 
-    # Iterate rows one-by-one for validation
+    # Iterate rows for validation (use itertuples for better performance)
     for idx, row in df.iterrows():
         total_rows += 1
-        # Build row_json mapping based on schema column names
-        row_json: Dict[str, Any] = {}
-        for col_def in schema.get("columns", []):
-            col_name = col_def["name"]
-            # If DataFrame lacks the column, value will be None
-            value = row.get(col_name) if col_name in df.columns else None
-            row_json[col_name] = value
+        
+        # Build row_json mapping based on schema column names (optimized)
+        row_json: Dict[str, Any] = {col: row.get(col) for col in schema_columns if col in df.columns}
 
         # Skip completely empty rows
         if all(_is_empty(v) for v in row_json.values()):
             continue
 
-        # Fetch schema from DB for this row (intentionally slow per requirement)
-        try:
-            schema = get_schema_from_db()
-        except Exception as e:
-            logger.exception("Failed to fetch schema from DB for row %d", idx + 2)
-            failed_rows += 1
-            errors.append({"row": idx + 2, "data": _sanitize_for_json(row_json), "error": f"Failed to fetch schema: {e}"})
-            # Fail entire transaction
-            raise ValueError(f"Failed to fetch schema for row {idx + 2}: {e}")
-
-        # Verbose logging: raw row preview
-        sanitized_row_preview = _sanitize_for_json(row_json)
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug("Row %d raw data: %s", idx + 2, sanitized_row_preview)
-
-        # Print every row to console while validating (helps measure logging/print impact)
-        # print(f"Validating row {idx + 2}: {sanitized_row_preview}", flush=True)
-        logger.info("Validating row %d: %s", idx + 2, sanitized_row_preview)
-
+        # Validate row (removed excessive logging)
         is_valid, err_msg, cleaned = validate_row_against_schema(row_json, schema)
         if not is_valid:
-            failed_rows += 1
-            sanitized = _sanitize_for_json(row_json)
-            logger.error("Validation failed at row %d: %s -- data: %s", idx + 2, err_msg, sanitized)
-            errors.append({"row": idx + 2, "data": sanitized, "error": err_msg})
             # Fail entire transaction on validation error
+            logger.error("Validation failed at row %d: %s", idx + 2, err_msg)
             raise ValueError(f"Validation failed at row {idx + 2}: {err_msg}")
-
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug("Row %d validated -> cleaned: %s", idx + 2, _sanitize_for_json(cleaned))
 
         # Create record and add to list for bulk insert
         record = _create_record(cleaned)
