@@ -22,6 +22,8 @@ pip-wheel-metadata/
 .installed.cfg
 *.egg
 
+*.xlsx
+
 # Virtual environment
 venv/
 ENV/
