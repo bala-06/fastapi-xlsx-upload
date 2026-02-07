@@ -112,31 +112,20 @@ def validate_row_against_schema(row_json: Dict[str, Any], schema: Dict[str, Any]
     return True, "", cleaned
 
 
-def _insert_row_db(cleaned_row: Dict[str, Any]) -> None:
-    db = SessionLocal()
-    try:
-        db_record = EmployeeRecord(
-            name=cleaned_row.get("name"),
-            email=cleaned_row.get("email"),
-            department=cleaned_row.get("department"),
-            salary=cleaned_row.get("salary")
-        )
-        db.add(db_record)
-        db.commit()
-        db.refresh(db_record)
-        # Return inserted id for logging
-        return getattr(db_record, 'id', None)
-    except SQLAlchemyError as e:
-        db.rollback()
-        raise
-    finally:
-        db.close()
+def _create_record(cleaned_row: Dict[str, Any]) -> EmployeeRecord:
+    """Create a database record instance (not yet persisted)."""
+    return EmployeeRecord(
+        name=cleaned_row.get("name"),
+        email=cleaned_row.get("email"),
+        department=cleaned_row.get("department"),
+        salary=cleaned_row.get("salary")
+    )
 
 
 def process_file_pandas(file_bytes: bytes, schema: Dict[str, Any]) -> Dict[str, Any]:
     """
     Process an uploaded XLSX file (bytes) using pandas, validating each row against schema,
-    inserting valid rows into DB with one transaction per row, and returning a summary dict.
+    inserting ALL valid rows into DB with ONE session/transaction. If any error occurs, rollback everything.
     """
     results: List[Dict[str, Any]] = []
     total_rows = 0
@@ -156,7 +145,10 @@ def process_file_pandas(file_bytes: bytes, schema: Dict[str, Any]) -> Dict[str, 
 
     logger.info("Processing Excel file via pandas: %d rows detected", len(df))
 
-    # Iterate rows one-by-one
+    # Collect validated records for bulk insert
+    records_to_insert: List[EmployeeRecord] = []
+
+    # Iterate rows one-by-one for validation
     for idx, row in df.iterrows():
         total_rows += 1
         # Build row_json mapping based on schema column names
@@ -178,7 +170,8 @@ def process_file_pandas(file_bytes: bytes, schema: Dict[str, Any]) -> Dict[str, 
             logger.exception("Failed to fetch schema from DB for row %d", idx + 2)
             failed_rows += 1
             errors.append({"row": idx + 2, "data": _sanitize_for_json(row_json), "error": f"Failed to fetch schema: {e}"})
-            continue
+            # Fail entire transaction
+            raise ValueError(f"Failed to fetch schema for row {idx + 2}: {e}")
 
         # Verbose logging: raw row preview
         sanitized_row_preview = _sanitize_for_json(row_json)
@@ -186,7 +179,7 @@ def process_file_pandas(file_bytes: bytes, schema: Dict[str, Any]) -> Dict[str, 
             logger.debug("Row %d raw data: %s", idx + 2, sanitized_row_preview)
 
         # Print every row to console while validating (helps measure logging/print impact)
-        print(f"Validating row {idx + 2}: {sanitized_row_preview}", flush=True)
+        # print(f"Validating row {idx + 2}: {sanitized_row_preview}", flush=True)
         logger.info("Validating row %d: %s", idx + 2, sanitized_row_preview)
 
         is_valid, err_msg, cleaned = validate_row_against_schema(row_json, schema)
@@ -195,24 +188,30 @@ def process_file_pandas(file_bytes: bytes, schema: Dict[str, Any]) -> Dict[str, 
             sanitized = _sanitize_for_json(row_json)
             logger.error("Validation failed at row %d: %s -- data: %s", idx + 2, err_msg, sanitized)
             errors.append({"row": idx + 2, "data": sanitized, "error": err_msg})
-            continue
+            # Fail entire transaction on validation error
+            raise ValueError(f"Validation failed at row {idx + 2}: {err_msg}")
 
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("Row %d validated -> cleaned: %s", idx + 2, _sanitize_for_json(cleaned))
 
-        # Attempt DB insert with isolated transaction
-        try:
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug("Row %d: inserting to DB", idx + 2)
-            inserted_id = _insert_row_db(cleaned)
-            successful_inserts += 1
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug("Row %d: insert successful id=%s", idx + 2, inserted_id)
-        except Exception as e:
-            failed_rows += 1
-            sanitized = _sanitize_for_json(cleaned)
-            logger.exception("DB insert failed at row %d", idx + 2)
-            errors.append({"row": idx + 2, "data": sanitized, "error": f"DB insert failed: {str(e)}"})
+        # Create record and add to list for bulk insert
+        record = _create_record(cleaned)
+        records_to_insert.append(record)
+
+    # Bulk insert all validated records in ONE transaction
+    db = SessionLocal()
+    try:
+        logger.info("Starting bulk insert of %d records with one session", len(records_to_insert))
+        db.add_all(records_to_insert)
+        db.commit()
+        successful_inserts = len(records_to_insert)
+        logger.info("Bulk insert successful: %d records committed", successful_inserts)
+    except Exception as e:
+        logger.exception("Bulk insert failed, rolling back entire transaction")
+        db.rollback()
+        raise ValueError(f"Bulk insert failed: {str(e)}")
+    finally:
+        db.close()
 
     return {
         "total_rows": total_rows,
