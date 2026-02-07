@@ -227,7 +227,3 @@ File upload/
 ├── .env.example         # Environment template
 └── README.md           # This file
 ```
-
-## Contributing
-
-This is Phase 1 focused on correctness. Performance optimizations welcome in Phase 2!
