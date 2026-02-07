@@ -16,7 +16,7 @@ from schema_store import ensure_schema_loaded
 from pandas_processor import process_file_pandas
 
 # Configure basic logging (set DEBUG for verbose per-row logs)
-logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(name)s - %(message)s")
+logging.basicConfig(level=logging.ERROR, format="%(asctime)s %(levelname)s %(name)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 app = FastAPI(

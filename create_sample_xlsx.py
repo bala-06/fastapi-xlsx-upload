@@ -26,19 +26,7 @@ def create_sample_xlsx(filename="employees_500.xlsx"):
         department = departments[i % len(departments)]
         salary = 50000 + (i % 10) * 3000
 
-        # ---- Inject invalid data intentionally ----
-        if i % 50 == 0:
-            email = "invalid-email"          # invalid email
-            invalid_count += 1
-        elif i % 75 == 0:
-            name = ""                         # empty name
-            invalid_count += 1
-        elif i % 120 == 0:
-            salary = 99999999999              # unrealistic salary
-            invalid_count += 1
-        else:
-            valid_count += 1
-        # ------------------------------------------
+        
 
         ws.append([name, email, department, salary])
 
