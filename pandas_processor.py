@@ -10,6 +10,7 @@ import pandas as pd
 from sqlalchemy.exc import SQLAlchemyError
 from database import SessionLocal
 from models import EmployeeRecord
+from schema_store import get_schema_from_db
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +124,8 @@ def _insert_row_db(cleaned_row: Dict[str, Any]) -> None:
         db.add(db_record)
         db.commit()
         db.refresh(db_record)
+        # Return inserted id for logging
+        return getattr(db_record, 'id', None)
     except SQLAlchemyError as e:
         db.rollback()
         raise
@@ -168,6 +171,24 @@ def process_file_pandas(file_bytes: bytes, schema: Dict[str, Any]) -> Dict[str, 
         if all(_is_empty(v) for v in row_json.values()):
             continue
 
+        # Fetch schema from DB for this row (intentionally slow per requirement)
+        try:
+            schema = get_schema_from_db()
+        except Exception as e:
+            logger.exception("Failed to fetch schema from DB for row %d", idx + 2)
+            failed_rows += 1
+            errors.append({"row": idx + 2, "data": _sanitize_for_json(row_json), "error": f"Failed to fetch schema: {e}"})
+            continue
+
+        # Verbose logging: raw row preview
+        sanitized_row_preview = _sanitize_for_json(row_json)
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("Row %d raw data: %s", idx + 2, sanitized_row_preview)
+
+        # Print every row to console while validating (helps measure logging/print impact)
+        print(f"Validating row {idx + 2}: {sanitized_row_preview}", flush=True)
+        logger.info("Validating row %d: %s", idx + 2, sanitized_row_preview)
+
         is_valid, err_msg, cleaned = validate_row_against_schema(row_json, schema)
         if not is_valid:
             failed_rows += 1
@@ -176,10 +197,17 @@ def process_file_pandas(file_bytes: bytes, schema: Dict[str, Any]) -> Dict[str, 
             errors.append({"row": idx + 2, "data": sanitized, "error": err_msg})
             continue
 
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("Row %d validated -> cleaned: %s", idx + 2, _sanitize_for_json(cleaned))
+
         # Attempt DB insert with isolated transaction
         try:
-            _insert_row_db(cleaned)
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("Row %d: inserting to DB", idx + 2)
+            inserted_id = _insert_row_db(cleaned)
             successful_inserts += 1
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("Row %d: insert successful id=%s", idx + 2, inserted_id)
         except Exception as e:
             failed_rows += 1
             sanitized = _sanitize_for_json(cleaned)

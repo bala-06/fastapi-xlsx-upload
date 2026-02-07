@@ -10,12 +10,13 @@ from models import EmployeeRecord
 from schemas import EmployeeRowSchema, UploadResponse
 import json
 from pathlib import Path
+from schema_store import ensure_schema_loaded
 
 # pandas-based processor (row-by-row using JSON schema)
 from pandas_processor import process_file_pandas
 
-# Configure basic logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s - %(message)s")
+# Configure basic logging (set DEBUG for verbose per-row logs)
+logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(name)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
@@ -28,7 +29,12 @@ app = FastAPI(
 async def startup_event():
     """Initialize database on startup"""
     init_db()
-    print("✅ Database initialized")
+    # Ensure schema is populated in DB (load from column_schema.json if table empty)
+    try:
+        ensure_schema_loaded(Path(__file__).parent / "column_schema.json")
+        print("✅ Database initialized and schema ensured")
+    except Exception as e:
+        print(f"⚠️ Database initialized but failed to ensure schema: {e}")
 
 @app.get("/")
 async def root():
@@ -68,6 +74,7 @@ async def upload_xlsx_file(file: UploadFile = File(...)):
     Returns:
         UploadResponse with processing results
     """
+    logger.debug("Entered upload_xlsx_file endpoint with filename=%s", getattr(file, 'filename', None))
     # Validate file type
     if not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="Only XLSX/XLS files are supported")
@@ -88,9 +95,13 @@ async def upload_xlsx_file(file: UploadFile = File(...)):
     try:
         result = process_file_pandas(contents, schema)
     except ValueError as ve:
+        logger.error("Processing error (bad input): %s", ve)
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
+        logger.exception("Processing failed unexpectedly")
         raise HTTPException(status_code=500, detail=f"Processing failed: {e}")
+
+    logger.debug("Exiting upload_xlsx_file endpoint: processed %d rows, %d success, %d failed", result.get('total_rows', 0), result.get('successful_inserts', 0), result.get('failed_rows', 0))
 
     return UploadResponse(**result)
 
@@ -98,6 +109,7 @@ async def upload_xlsx_file(file: UploadFile = File(...)):
 @app.post("/upload_pandas", response_model=UploadResponse)
 async def upload_xlsx_file_pandas(file: UploadFile = File(...)):
     """Upload XLSX and process using pandas + JSON schema validation per row."""
+    logger.debug("Entered upload_xlsx_file_pandas endpoint with filename=%s", getattr(file, 'filename', None))
     if not file.filename.endswith(('.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="Only XLSX/XLS files are supported")
 
@@ -117,9 +129,13 @@ async def upload_xlsx_file_pandas(file: UploadFile = File(...)):
     try:
         result = process_file_pandas(contents, schema)
     except ValueError as ve:
+        logger.error("Processing error (bad input): %s", ve)
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
+        logger.exception("Processing failed unexpectedly")
         raise HTTPException(status_code=500, detail=f"Processing failed: {e}")
+
+    logger.debug("Exiting upload_xlsx_file_pandas endpoint: processed %d rows, %d success, %d failed", result.get('total_rows', 0), result.get('successful_inserts', 0), result.get('failed_rows', 0))
 
     return UploadResponse(**result)
 
